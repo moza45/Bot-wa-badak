@@ -13,8 +13,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 // ╔══════════════════════════════════════════════════════════════╗
-// ║         W A - K I C K E R   B O T   v 4 . 2 . 1            ║
-// ║              F I X E D   E D I T I O N                      ║
+// ║         W A - K I C K E R   B O T   v 4 . 3 . 0            ║
+// ║           G R O U P   P I C K E R   E D I T I O N          ║
 // ╚══════════════════════════════════════════════════════════════╝
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -61,11 +61,11 @@ const userSessions   = new Map();
 const kickSelections = new Map();
 
 // ── Anti-Stream-Conflict state ───────────────────────────────
-const loginLocks     = new Map(); // userId → true (sedang proses login)
-const conflictCooldowns = new Map(); // userId → timestamp boleh login lagi
-const reconnectAttempts = new Map(); // userId → jumlah retry berturut-turut
-const CONFLICT_COOLDOWN_MS = 35_000; // 35 detik wajib tunggu setelah 515
-const MAX_RECONNECT_ATTEMPTS = 3;    // max auto-reconnect sebelum minta user intervensi
+const loginLocks     = new Map();
+const conflictCooldowns = new Map();
+const reconnectAttempts = new Map();
+const CONFLICT_COOLDOWN_MS = 35_000;
+const MAX_RECONNECT_ATTEMPTS = 3;
 
 if (!fs.existsSync(AUTH_BASE_FOLDER)) fs.mkdirSync(AUTH_BASE_FOLDER, { recursive: true });
 
@@ -277,7 +277,6 @@ function formatRupiah(num) {
     return 'Rp ' + num.toLocaleString('id-ID');
 }
 
-
 // ══════════════════════════════════════════════════════════════
 //  ANIMASI HIDUP — LIVE MESSAGES
 // ══════════════════════════════════════════════════════════════
@@ -383,9 +382,7 @@ async function liveCountdown(ctx, totalMs, headerText, onDone) {
     );
     setTimeout(async () => {
         await anim.stop(
-            `✅ *Cooldown selesai!*
-
-` +
+            `✅ *Cooldown selesai!*\n\n` +
             `Silakan tekan *🔑 Login WhatsApp* lagi.`
         );
         if (onDone) onDone();
@@ -551,11 +548,11 @@ async function sendQR(ctx, qr) {
         await ctx.reply(`❌ QR code kosong, coba lagi.`);
         return;
     }
-    
+
     await humanDelay(1800, 3600);
-    
+
     const sendAsText = Math.random() < 0.25;
-    
+
     try {
         if (!sendAsText) {
             const qrBuffer = await QRCode.toBuffer(qr, {
@@ -565,7 +562,7 @@ async function sendQR(ctx, qr) {
                 color: { dark: '#000000', light: '#FFFFFF' },
                 scale: 8
             });
-            
+
             await ctx.replyWithPhoto(
                 { source: qrBuffer },
                 {
@@ -623,7 +620,6 @@ async function stealthKick(sock, groupId, jids, onProgress) {
 //  LOGIN
 // ══════════════════════════════════════════════════════════════
 
-// ── Helper: matikan socket lama dengan benar ─────────────────
 async function destroySession(userId) {
     const old = userSessions.get(userId);
     if (!old) return;
@@ -634,19 +630,15 @@ async function destroySession(userId) {
         old.sock.end(new Error('destroyed'));
     } catch (_) {}
     userSessions.delete(userId);
-    // Beri waktu OS/WA server flush koneksi lama sebelum buka yang baru
     await new Promise(r => setTimeout(r, 3500));
 }
 
-// ── Helper: exponential backoff delay ────────────────────────
 function backoffDelay(attempt) {
-    // attempt 1→5s, 2→10s, 3→20s  (cap 30s)
     const ms = Math.min(5000 * Math.pow(2, attempt - 1), 30000);
     return new Promise(r => setTimeout(r, ms));
 }
 
 async function startLogin(ctx, userId) {
-    // ── 1. CEK COOLDOWN CONFLICT ─────────────────────────────
     const cooldownUntil = conflictCooldowns.get(userId);
     if (cooldownUntil && Date.now() < cooldownUntil) {
         const sisaDetik = Math.ceil((cooldownUntil - Date.now()) / 1000);
@@ -658,32 +650,28 @@ async function startLogin(ctx, userId) {
         );
     }
 
-    // ── 2. CEK LOGIN LOCK (cegah double-tap) ─────────────────
     if (loginLocks.get(userId)) {
         return ctx.reply(`⏳ *Proses login sedang berjalan*, harap tunggu...`, { parse_mode: 'Markdown' });
     }
     loginLocks.set(userId, true);
 
     try {
-        // ── 3. DESTROY SESSION LAMA DENGAN BENAR ─────────────
         if (userSessions.has(userId)) {
             await ctx.reply(`🔄 _Menutup koneksi lama..._`, { parse_mode: 'Markdown' });
             await destroySession(userId);
         }
 
-        // ── 4. BUAT KONEKSI BARU ─────────────────────────────
         const authFolder     = getEncryptedAuthFolder(userId);
         const { version }    = await fetchLatestBaileysVersion();
         const browserProfile = getRandomBrowserProfile();
         const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
-        // Animasi connecting
         const connectAnim = await liveConnecting(ctx);
 
         const sock = makeWASocket({
             auth: state,
             browser: browserProfile,
-            logger: pino({ level: 'silent' }), // silent > error agar tidak ada noise
+            logger: pino({ level: 'silent' }),
             connectTimeoutMs: 60_000,
             defaultQueryTimeoutMs: 30_000,
             keepAliveIntervalMs: 30_000,
@@ -691,7 +679,6 @@ async function startLogin(ctx, userId) {
             version,
             generateHighQualityLinkPreview: false,
             printQRInTerminal: false,
-            // Jangan reconnect otomatis — kita kelola sendiri agar bisa handle 515
             shouldReconnect: () => false,
         });
 
@@ -703,19 +690,15 @@ async function startLogin(ctx, userId) {
         };
         userSessions.set(userId, session);
 
-        // ── 5. EVENT: CONNECTION UPDATE ──────────────────────
         sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
-            // ── QR baru diterima ────────────────────────────
             if (qr) {
                 session.lastQR = qr;
                 if (!session.qrBlocked) {
                     session.qrBlocked = true;
-                    // Stop animasi connecting sebelum kirim QR
                     try { await connectAnim.stop(null); } catch (_) {}
                     await sendQR(ctx, qr);
-                    // QR valid 60 detik di WA, beri tahu user setelah itu
                     session.qrTimer = setTimeout(async () => {
                         if (!session.loggedIn) {
                             session.qrBlocked = false;
@@ -728,7 +711,6 @@ async function startLogin(ctx, userId) {
                 }
             }
 
-            // ── Koneksi terputus ────────────────────────────
             if (connection === 'close') {
                 if (session.qrTimer)     clearTimeout(session.qrTimer);
                 if (session.reconnTimer) clearTimeout(session.reconnTimer);
@@ -739,34 +721,23 @@ async function startLogin(ctx, userId) {
 
                 console.log(`[${userId}] WA close — code=${statusCode}, attempt=${attempts}`);
 
-                // ── KASUS 515: Stream Conflict ───────────────
                 if (statusCode === 515) {
                     sock.ev.removeAllListeners();
                     userSessions.delete(userId);
                     reconnectAttempts.delete(userId);
-                    // Set cooldown 35 detik — WAJIB tunggu sebelum boleh login lagi
                     conflictCooldowns.set(userId, Date.now() + CONFLICT_COOLDOWN_MS);
                     try { await connectAnim.stop(null); } catch (_) {}
 
-                    // Kirim info penyebab dulu
                     await ctx.reply(
-                        `⚠️ *Stream Conflict (515)*
-
-` +
-                        `WA mendeteksi koneksi ganda dari device yang sama.
-
-` +
-                        `*Penyebab umum:*
-` +
-                        `• Bot di-restart terlalu cepat
-` +
-                        `• Ada instance bot lain aktif
-` +
+                        `⚠️ *Stream Conflict (515)*\n\n` +
+                        `WA mendeteksi koneksi ganda dari device yang sama.\n\n` +
+                        `*Penyebab umum:*\n` +
+                        `• Bot di-restart terlalu cepat\n` +
+                        `• Ada instance bot lain aktif\n` +
                         `• Session belum dilepas server WA`,
                         { parse_mode: 'Markdown' }
                     );
 
-                    // Lalu jalankan countdown animasi live
                     await liveCountdown(
                         ctx,
                         CONFLICT_COOLDOWN_MS,
@@ -776,7 +747,6 @@ async function startLogin(ctx, userId) {
                     return;
                 }
 
-                // ── KASUS 401/LoggedOut: session invalid ─────
                 if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
                     sock.ev.removeAllListeners();
                     userSessions.delete(userId);
@@ -788,7 +758,6 @@ async function startLogin(ctx, userId) {
                     return;
                 }
 
-                // ── KASUS lain: coba reconnect dengan backoff ─
                 if (attempts <= MAX_RECONNECT_ATTEMPTS) {
                     reconnectAttempts.set(userId, attempts);
                     const delayMs = Math.min(5000 * Math.pow(2, attempts - 1), 30000);
@@ -808,7 +777,6 @@ async function startLogin(ctx, userId) {
                     }, delayMs);
 
                 } else {
-                    // Sudah melebihi max retry
                     sock.ev.removeAllListeners();
                     userSessions.delete(userId);
                     reconnectAttempts.delete(userId);
@@ -820,12 +788,11 @@ async function startLogin(ctx, userId) {
                 }
             }
 
-            // ── Koneksi berhasil ────────────────────────────
             if (connection === 'open') {
                 session.loggedIn = true;
                 if (session.qrTimer) clearTimeout(session.qrTimer);
-                reconnectAttempts.delete(userId); // reset retry counter
-                conflictCooldowns.delete(userId); // hapus cooldown jika ada
+                reconnectAttempts.delete(userId);
+                conflictCooldowns.delete(userId);
                 try { await connectAnim.stop(null); } catch (_) {}
                 try { await sock.sendPresenceUpdate('available'); } catch (_) {}
                 const kb = isAdmin(userId) ? KB_ADMIN_MAIN : KB_MAIN;
@@ -839,8 +806,52 @@ async function startLogin(ctx, userId) {
         sock.ev.on('creds.update', () => { saveCreds(); });
 
     } finally {
-        // Lock SELALU dilepas, baik sukses maupun error
         loginLocks.delete(userId);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  GROUP PICKER — KLIK LANGSUNG TANPA KETIK NAMA
+// ══════════════════════════════════════════════════════════════
+
+async function showGroupPicker(ctx, userId, session) {
+    const fetchAnim = await spinnerMessage(ctx, 'Mengambil daftar grup...');
+    try {
+        const chats  = await session.sock.groupFetchAllParticipating();
+        const groups = Object.values(chats);
+
+        if (groups.length === 0) {
+            await fetchAnim.stop(`❌ *Tidak ada grup ditemukan.*`);
+            return;
+        }
+
+        const isTrial      = isTrialOnly(userId);
+        const displayGroups = isTrial ? groups.slice(0, 1) : groups;
+
+        // Buat tombol inline — satu baris per grup
+        // Callback data dibatasi 64 byte, pakai index agar aman untuk nama grup panjang
+        // Simpan mapping index → group sementara di session
+        session._groupPickerList = displayGroups;
+
+        const buttons = displayGroups.map((g, i) => {
+            const memberCount = g.participants?.length || 0;
+            const label = `${i + 1}. ${g.subject} (${memberCount} 👥)`.substring(0, 64);
+            return [Markup.button.callback(label, `selectgrp_${i}`)];
+        });
+        buttons.push([Markup.button.callback('❌ Batal', 'selectgrp_cancel')]);
+
+        await fetchAnim.stop(null);
+
+        let header = `╔${DIVIDER}╗\n║  PILIH GRUP\n╚${DIVIDER}╝\n\n`;
+        if (isTrial) header += `⚠️ _Trial: hanya 1 grup_\n\n`;
+        header += `Ketuk nama grup yang ingin dipilih:`;
+
+        await ctx.reply(header, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons }
+        });
+    } catch (err) {
+        await fetchAnim.stop(`❌ *Error:* ${err.message}`);
     }
 }
 
@@ -977,7 +988,7 @@ async function addContactsToGroup(ctx, userId, contacts, groupId, groupName) {
             await session.sock.groupParticipantsUpdate(groupId, [result.jid], 'add');
             berhasil++;
             await humanDelay(1200, 2800);
-            
+
             if ((i + 1) % 3 === 0 || i + 1 === total) {
                 try {
                     await ctx.telegram.editMessageText(
@@ -1005,7 +1016,7 @@ async function addContactsToGroup(ctx, userId, contacts, groupId, groupName) {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  COMMAND HANDLERS (DEFINED BEFORE HEARS)
+//  COMMAND HANDLERS
 // ══════════════════════════════════════════════════════════════
 
 tgBot.start(async (ctx) => {
@@ -1074,7 +1085,6 @@ tgBot.start(async (ctx) => {
     );
 });
 
-// COMMANDS
 tgBot.command('trial', async (ctx) => {
     const user   = ctx.from;
     const status = getUserStatus(user.id);
@@ -1203,7 +1213,7 @@ tgBot.command('logout', requireAccess, async (ctx) => {
     const userId = ctx.from.id;
     if (!userSessions.has(userId)) return ctx.reply('❌ Belum login!');
     try {
-        await destroySession(userId); // pakai destroySession agar bersih
+        await destroySession(userId);
         const authFolder = getEncryptedAuthFolder(userId);
         if (fs.existsSync(authFolder)) fs.rmSync(authFolder, { recursive: true, force: true });
         kickSelections.delete(userId);
@@ -1216,53 +1226,38 @@ tgBot.command('logout', requireAccess, async (ctx) => {
     }
 });
 
+// /groups dan /select tetap ada sebagai fallback command
 tgBot.command('groups', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
-
-    await ctx.reply('⏳ *Mengambil daftar grup...*', { parse_mode: 'Markdown' });
-    try {
-        const chats = await session.sock.groupFetchAllParticipating();
-        const groups = Object.values(chats);
-        if (groups.length === 0) return ctx.reply('❌ Tidak ada grup.');
-
-        const isTrial = isTrialOnly(userId);
-        const displayGroups = isTrial ? groups.slice(0, 1) : groups;
-
-        let msg = `╔${DIVIDER}╗\n║  DAFTAR GRUP\n╚${DIVIDER}╝\n\n`;
-        if (isTrial) msg += `⚠️ Trial: hanya 1 grup\n\n`;
-        displayGroups.forEach((g, i) => {
-            msg += `${i+1}. ${g.subject}\n   👥 ${g.participants?.length || 0} anggota\n\n`;
-        });
-        await ctx.reply(msg, { parse_mode: 'Markdown' });
-    } catch (err) {
-        await ctx.reply(`❌ Error: ${err.message}`, { parse_mode: 'Markdown' });
-    }
+    await showGroupPicker(ctx, userId, session);
 });
 
 tgBot.command('select', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
 
-    let groupName = ctx.message.text.replace('/select', '').trim().replace(/^["']|["']$/g, '');
-    if (!groupName) return ctx.reply('Format: /select "Nama Grup"', { parse_mode: 'Markdown' });
-
-    try {
-        const chats = await session.sock.groupFetchAllParticipating();
-        const groups = Object.values(chats);
-        const isTrial = isTrialOnly(userId);
-        const allowedGroups = isTrial ? groups.slice(0, 1) : groups;
-        const target = allowedGroups.find(g => g.subject.toLowerCase() === groupName.toLowerCase());
-
-        if (!target) return ctx.reply(`❌ Grup "${groupName}" tidak ditemukan.`, { parse_mode: 'Markdown' });
-
-        session.groupId = target.id;
-        session.groupName = target.subject;
-        await ctx.reply(`✅ *Grup terpilih!*\n🎯 ${target.subject}\n👥 ${target.participants?.length || 0} anggota\n\nTekan *🔴 Kick Menu* untuk mulai.`, { parse_mode: 'Markdown' });
-    } catch (err) {
-        await ctx.reply(`❌ Error: ${err.message}`, { parse_mode: 'Markdown' });
+    // Jika ada argumen nama, pakai cara lama
+    const groupName = ctx.message.text.replace('/select', '').trim().replace(/^["']|["']$/g, '');
+    if (groupName) {
+        try {
+            const chats  = await session.sock.groupFetchAllParticipating();
+            const groups = Object.values(chats);
+            const isTrial = isTrialOnly(userId);
+            const allowedGroups = isTrial ? groups.slice(0, 1) : groups;
+            const target = allowedGroups.find(g => g.subject.toLowerCase() === groupName.toLowerCase());
+            if (!target) return ctx.reply(`❌ Grup "${groupName}" tidak ditemukan.`, { parse_mode: 'Markdown' });
+            session.groupId   = target.id;
+            session.groupName = target.subject;
+            await ctx.reply(`✅ *Grup terpilih!*\n🎯 ${esc(target.subject)}\n👥 ${target.participants?.length || 0} anggota\n\nTekan *🔴 Kick Menu* untuk mulai.`, { parse_mode: 'Markdown' });
+        } catch (err) {
+            await ctx.reply(`❌ Error: ${err.message}`, { parse_mode: 'Markdown' });
+        }
+    } else {
+        // Tanpa argumen → tampilkan picker
+        await showGroupPicker(ctx, userId, session);
     }
 });
 
@@ -1286,7 +1281,7 @@ tgBot.command('buatgrup', requireAccess, async (ctx) => {
 
     try {
         const result = await session.sock.groupCreate(namaGrup, []);
-        session.groupId = result.id;
+        session.groupId   = result.id;
         session.groupName = namaGrup;
 
         let inviteLink = '-';
@@ -1319,12 +1314,12 @@ tgBot.command('status', requireAccess, async (ctx) => {
 
     let waStatus = '🔴 Belum Login';
     if (session && !session.loggedIn) waStatus = '🟡 Menunggu QR';
-    if (session && session.loggedIn) waStatus = '🟢 Terhubung';
+    if (session && session.loggedIn)  waStatus = '🟢 Terhubung';
 
     let accLine = '';
-    if (accStatus === 'admin') accLine = '👑 Admin';
+    if (accStatus === 'admin')   accLine = '👑 Admin';
     else if (accStatus === 'regular') accLine = `⭐ Reguler (${formatCountdown(u?.expiresAt)})`;
-    else if (accStatus === 'trial') accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
+    else if (accStatus === 'trial')   accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
 
     await ctx.reply(`📡 WA: ${waStatus}\n🏷️ Akun: ${accLine}\n🎯 Grup: ${session?.groupName || 'Belum pilih'}`, { parse_mode: 'Markdown' });
 });
@@ -1353,8 +1348,8 @@ tgBot.command('help', async (ctx) => {
         "   Tekan 🔑 Login WhatsApp\n" +
         "   → Scan QR di WA lo\n\n" +
         "*3. Pilih Grup*\n" +
-        "   Tekan 📋 Daftar Grup — Lihat semua grup\n" +
-        "   Tekan 🎯 Pilih Grup → ketik: /select \"Nama Grup\"\n\n" +
+        "   Tekan 📋 Daftar Grup atau 🎯 Pilih Grup\n" +
+        "   → Ketuk nama grup langsung dari daftar\n\n" +
         "*4. Kick Anggota*\n" +
         "   Tekan 🔴 Kick Menu\n" +
         "   → Centang anggota yang mau dikick\n" +
@@ -1406,13 +1401,13 @@ tgBot.command('userlist', async (ctx) => {
         msg += "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n";
         msg += "✅ USER AKTIF:\n";
         msg += "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n";
-        
+
         for (let i = 0; i < actives.length; i++) {
-            const u = actives[i];
+            const u   = actives[i];
             const exp = u.role === 'trial' ? u.trialExpiresAt : u.expiresAt;
             const role = u.role === 'trial' ? '🎁 Trial' : '⭐ Reguler';
             const sisa = formatCountdown(exp);
-            
+
             msg += `${i + 1}. ${userDisplayName(u)}\n`;
             msg += `   ID: \`${u.id}\` | ${role}\n`;
             msg += `   Exp: ${formatDate(exp)} (${sisa})\n\n`;
@@ -1440,7 +1435,7 @@ tgBot.command('userlist', async (ctx) => {
 tgBot.command('revokeuser', async (ctx) => {
     if (!isAdmin(ctx.from.id)) return ctx.reply('⛔ Akses ditolak.');
 
-    const args = ctx.message.text.split(' ');
+    const args     = ctx.message.text.split(' ');
     const targetId = parseInt(args[1]);
     if (!targetId) return ctx.reply(`*Format:* /revokeuser [user_id]`, { parse_mode: 'Markdown' });
 
@@ -1468,9 +1463,9 @@ tgBot.command('revokeuser', async (ctx) => {
 tgBot.command('adduser', async (ctx) => {
     if (!isAdmin(ctx.from.id)) return ctx.reply('⛔ Akses ditolak.');
 
-    const args = ctx.message.text.split(' ');
+    const args     = ctx.message.text.split(' ');
     const targetId = parseInt(args[1]);
-    const pkgKey = args[2];
+    const pkgKey   = args[2];
 
     if (!targetId || !pkgKey || !PACKAGES[pkgKey]) {
         return ctx.reply(
@@ -1506,7 +1501,7 @@ tgBot.command('adduser', async (ctx) => {
 // ══════════════════════════════════════════════════════════════
 
 tgBot.hears('🎁 Coba Gratis (Trial)', async (ctx) => {
-    const user = ctx.from;
+    const user   = ctx.from;
     const status = getUserStatus(user.id);
     if (status === 'regular') return ctx.reply('✅ Sudah punya akses.', getKeyboard(user.id));
     if (status === 'trial') {
@@ -1535,8 +1530,8 @@ tgBot.hears('❓ Bantuan', async (ctx) => {
         "   Tekan 🔑 Login WhatsApp\n" +
         "   → Scan QR di WA lo\n\n" +
         "*3. Pilih Grup*\n" +
-        "   Tekan 📋 Daftar Grup — Lihat semua grup\n" +
-        "   Tekan 🎯 Pilih Grup → ketik: /select \"Nama Grup\"\n\n" +
+        "   Tekan 📋 Daftar Grup atau 🎯 Pilih Grup\n" +
+        "   → Ketuk nama grup langsung dari daftar\n\n" +
         "*4. Kick Anggota*\n" +
         "   Tekan 🔴 Kick Menu\n" +
         "   → Centang anggota yang mau dikick\n" +
@@ -1553,7 +1548,7 @@ tgBot.hears('❓ Bantuan', async (ctx) => {
 });
 
 tgBot.hears('🔑 Login WhatsApp', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (session && session.loggedIn) {
         return ctx.reply('✅ *Lo udah login!*', { parse_mode: 'Markdown' });
@@ -1567,19 +1562,19 @@ tgBot.hears('🔑 Login WhatsApp', requireAccess, async (ctx) => {
 });
 
 tgBot.hears('📊 Status', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions.get(userId);
+    const userId    = ctx.from.id;
+    const session   = userSessions.get(userId);
     const accStatus = getUserStatus(userId);
-    const u = getUser(userId);
+    const u         = getUser(userId);
 
     let waStatus = '🔴 Belum Login';
     if (session && !session.loggedIn) waStatus = '🟡 Menunggu QR';
-    if (session && session.loggedIn) waStatus = '🟢 Terhubung';
+    if (session && session.loggedIn)  waStatus = '🟢 Terhubung';
 
     let accLine = '';
-    if (accStatus === 'admin') accLine = '👑 Admin';
+    if (accStatus === 'admin')        accLine = '👑 Admin';
     else if (accStatus === 'regular') accLine = `⭐ Reguler (${formatCountdown(u?.expiresAt)})`;
-    else if (accStatus === 'trial') accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
+    else if (accStatus === 'trial')   accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
 
     await ctx.reply(`📡 WA: ${waStatus}\n🏷️ Akun: ${accLine}\n🎯 Grup: ${session?.groupName || 'Belum pilih'}`, { parse_mode: 'Markdown' });
 });
@@ -1593,33 +1588,20 @@ tgBot.hears('👤 Akun Saya', async (ctx) => {
     await ctx.reply(`👤 ${userDisplayNameEsc(u)}\n🆔 ${u.id}\nStatus: ${status}\nExp: ${u.expiresAt ? formatDate(u.expiresAt) : u.trialExpiresAt ? formatDate(u.trialExpiresAt) : '-'}`, { parse_mode: 'Markdown' });
 });
 
+// ── 📋 Daftar Grup → langsung tampilkan picker ────────────────
 tgBot.hears('📋 Daftar Grup', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
-
-    await ctx.reply('⏳ *Mengambil daftar grup...*', { parse_mode: 'Markdown' });
-    try {
-        const chats = await session.sock.groupFetchAllParticipating();
-        const groups = Object.values(chats);
-        if (groups.length === 0) return ctx.reply('❌ Tidak ada grup.');
-
-        const isTrial = isTrialOnly(userId);
-        const displayGroups = isTrial ? groups.slice(0, 1) : groups;
-
-        let msg = `╔${DIVIDER}╗\n║  DAFTAR GRUP\n╚${DIVIDER}╝\n\n`;
-        if (isTrial) msg += `⚠️ Trial: hanya 1 grup\n\n`;
-        displayGroups.forEach((g, i) => {
-            msg += `${i+1}. ${g.subject}\n   👥 ${g.participants?.length || 0} anggota\n\n`;
-        });
-        await ctx.reply(msg, { parse_mode: 'Markdown' });
-    } catch (err) {
-        await ctx.reply(`❌ Error: ${err.message}`, { parse_mode: 'Markdown' });
-    }
+    await showGroupPicker(ctx, userId, session);
 });
 
+// ── 🎯 Pilih Grup → sama, tampilkan picker ───────────────────
 tgBot.hears('🎯 Pilih Grup', requireAccess, async (ctx) => {
-    await ctx.reply(`Format: /select "Nama Grup"\n\nContoh: /select "Arisan RT 05"`, { parse_mode: 'Markdown' });
+    const userId  = ctx.from.id;
+    const session = userSessions.get(userId);
+    if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
+    await showGroupPicker(ctx, userId, session);
 });
 
 tgBot.hears('➕ Buat Grup WA', requireAccess, async (ctx) => {
@@ -1627,17 +1609,51 @@ tgBot.hears('➕ Buat Grup WA', requireAccess, async (ctx) => {
 });
 
 tgBot.hears('📥 Import VCF', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
-    if (!session.groupId) return ctx.reply('❌ *Pilih grup dulu!*', { parse_mode: 'Markdown' });
 
-    vcfPending.set(userId, { waitingFile: true, groupId: session.groupId, groupName: session.groupName });
-    await ctx.reply(`📎 *Kirim file .vcf sekarang* ke chat ini.`, { parse_mode: 'Markdown' });
+    // Ambil daftar grup dulu, lalu tampilkan picker khusus VCF
+    const fetchAnim = await spinnerMessage(ctx, 'Mengambil daftar grup...');
+    try {
+        const chats  = await session.sock.groupFetchAllParticipating();
+        const groups = Object.values(chats);
+
+        if (groups.length === 0) {
+            await fetchAnim.stop(`❌ *Tidak ada grup ditemukan.*`);
+            return;
+        }
+
+        const isTrial       = isTrialOnly(userId);
+        const displayGroups = isTrial ? groups.slice(0, 1) : groups;
+
+        session._vcfGroupPickerList = displayGroups;
+
+        const buttons = displayGroups.map((g, i) => {
+            const memberCount = g.participants?.length || 0;
+            const label = `${i + 1}. ${g.subject} (${memberCount} 👥)`.substring(0, 64);
+            return [Markup.button.callback(label, `vcfgrp_${i}`)];
+        });
+        buttons.push([Markup.button.callback('❌ Batal', 'vcfgrp_cancel')]);
+
+        await fetchAnim.stop(null);
+
+        let header = `╔${DIVIDER}╗\n║  PILIH GRUP TUJUAN VCF\n╚${DIVIDER}╝\n\n`;
+        if (isTrial) header += `⚠️ _Trial: hanya 1 grup_\n\n`;
+        header += `Pilih grup yang akan ditambahkan kontaknya:`;
+
+        await ctx.reply(header, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: buttons }
+        });
+
+    } catch (err) {
+        await fetchAnim.stop(`❌ *Error:* ${err.message}`);
+    }
 });
 
 tgBot.hears('🔴 Kick Menu', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const session = userSessions.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ *Login dulu!*', { parse_mode: 'Markdown' });
     if (!session.groupId) return ctx.reply('❌ *Pilih grup dulu!*', { parse_mode: 'Markdown' });
@@ -1645,19 +1661,19 @@ tgBot.hears('🔴 Kick Menu', requireAccess, async (ctx) => {
 });
 
 tgBot.hears('📡 Status', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
-    const session = userSessions.get(userId);
+    const userId    = ctx.from.id;
+    const session   = userSessions.get(userId);
     const accStatus = getUserStatus(userId);
-    const u = getUser(userId);
+    const u         = getUser(userId);
 
     let waStatus = '🔴 Belum Login';
     if (session && !session.loggedIn) waStatus = '🟡 Menunggu QR';
-    if (session && session.loggedIn) waStatus = '🟢 Terhubung';
+    if (session && session.loggedIn)  waStatus = '🟢 Terhubung';
 
     let accLine = '';
-    if (accStatus === 'admin') accLine = '👑 Admin';
+    if (accStatus === 'admin')        accLine = '👑 Admin';
     else if (accStatus === 'regular') accLine = `⭐ Reguler (${formatCountdown(u?.expiresAt)})`;
-    else if (accStatus === 'trial') accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
+    else if (accStatus === 'trial')   accLine = `🎁 Trial (${formatCountdown(u?.trialExpiresAt)})`;
 
     await ctx.reply(`📡 WA: ${waStatus}\n🏷️ Akun: ${accLine}\n🎯 Grup: ${session?.groupName || 'Belum pilih'}`, { parse_mode: 'Markdown' });
 });
@@ -1712,7 +1728,7 @@ tgBot.hears('👥 User List', async (ctx) => {
     if (actives.length > 0) {
         msg += `${DIVIDER_THIN}\n✅ USER AKTIF:\n${DIVIDER_THIN}\n`;
         actives.forEach((u, i) => {
-            const exp = u.role === 'trial' ? u.trialExpiresAt : u.expiresAt;
+            const exp  = u.role === 'trial' ? u.trialExpiresAt : u.expiresAt;
             const role = u.role === 'trial' ? '🎁 Trial' : '⭐ Reguler';
             msg += `${i + 1}. ${userDisplayName(u)}\n`;
             msg += `   ID: \`${u.id}\` | ${role}\n`;
@@ -1740,11 +1756,11 @@ tgBot.hears('👥 User List', async (ctx) => {
 // ══════════════════════════════════════════════════════════════
 
 tgBot.on('document', requireAccess, async (ctx) => {
-    const userId = ctx.from.id;
+    const userId  = ctx.from.id;
     const pending = vcfPending.get(userId);
     if (!pending || !pending.waitingFile) return;
 
-    const doc = ctx.message.document;
+    const doc   = ctx.message.document;
     const fname = doc.file_name || '';
 
     if (!fname.toLowerCase().endsWith('.vcf')) {
@@ -1755,8 +1771,8 @@ tgBot.on('document', requireAccess, async (ctx) => {
 
     try {
         const fileLink = await ctx.telegram.getFileLink(doc.file_id);
-        const resp = await fetch(fileLink.href);
-        const vcfText = await resp.text();
+        const resp     = await fetch(fileLink.href);
+        const vcfText  = await resp.text();
         const contacts = parseVCF(vcfText);
 
         if (contacts.length === 0) {
@@ -1764,7 +1780,7 @@ tgBot.on('document', requireAccess, async (ctx) => {
             return ctx.reply('❌ *Tidak ada nomor valid.*', { parse_mode: 'Markdown' });
         }
 
-        pending.contacts = contacts;
+        pending.contacts    = contacts;
         pending.waitingFile = false;
         vcfPending.set(userId, pending);
 
@@ -1783,6 +1799,89 @@ tgBot.on('document', requireAccess, async (ctx) => {
 // ══════════════════════════════════════════════════════════════
 //  INLINE BUTTON HANDLERS
 // ══════════════════════════════════════════════════════════════
+
+// ── Pilih grup via klik tombol (index-based) ─────────────────
+tgBot.action(/^selectgrp_(\d+|cancel)$/, requireAccess, async (ctx) => {
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery();
+
+    const param = ctx.match[1];
+
+    if (param === 'cancel') {
+        return ctx.editMessageText('✖ *Pemilihan grup dibatalkan.*', { parse_mode: 'Markdown' });
+    }
+
+    const session = userSessions.get(userId);
+    if (!session || !session.loggedIn) {
+        return ctx.editMessageText('❌ *Session habis. Login ulang.*', { parse_mode: 'Markdown' });
+    }
+
+    const idx = parseInt(param);
+
+    // Gunakan list yang tersimpan di session saat picker dibuka
+    const groupList = session._groupPickerList;
+    if (!groupList || idx >= groupList.length) {
+        return ctx.editMessageText('❌ *Data grup tidak ditemukan. Coba lagi.*', { parse_mode: 'Markdown' });
+    }
+
+    const target = groupList[idx];
+
+    session.groupId           = target.id;
+    session.groupName         = target.subject;
+    session._groupPickerList  = null; // bersihkan setelah dipilih
+
+    const memberCount = target.participants?.length || 0;
+
+    await ctx.editMessageText(
+        `✅ *Grup terpilih!*\n\n` +
+        `🎯 *${esc(target.subject)}*\n` +
+        `👥 ${memberCount} anggota\n\n` +
+        `Tekan *🔴 Kick Menu* untuk mulai.`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+tgBot.action(/^vcfgrp_(\d+|cancel)$/, requireAccess, async (ctx) => {
+    const userId = ctx.from.id;
+    await ctx.answerCbQuery();
+
+    const param = ctx.match[1];
+
+    if (param === 'cancel') {
+        session._vcfGroupPickerList = null;
+        return ctx.editMessageText('✖ *Import VCF dibatalkan.*', { parse_mode: 'Markdown' });
+    }
+
+    const session = userSessions.get(userId);
+    if (!session || !session.loggedIn) {
+        return ctx.editMessageText('❌ *Session habis. Login ulang.*', { parse_mode: 'Markdown' });
+    }
+
+    const idx       = parseInt(param);
+    const groupList = session._vcfGroupPickerList;
+
+    if (!groupList || idx >= groupList.length) {
+        return ctx.editMessageText('❌ *Data grup tidak ditemukan. Coba lagi.*', { parse_mode: 'Markdown' });
+    }
+
+    const target = groupList[idx];
+    session._vcfGroupPickerList = null;
+
+    // Simpan pending VCF dengan grup yang dipilih khusus ini
+    vcfPending.set(userId, {
+        waitingFile: true,
+        groupId:     target.id,
+        groupName:   target.subject
+    });
+
+    await ctx.editMessageText(
+        `✅ *Grup tujuan VCF dipilih!*\n\n` +
+        `🎯 *${esc(target.subject)}*\n` +
+        `👥 ${target.participants?.length || 0} anggota\n\n` +
+        `📎 *Sekarang kirim file .vcf ke chat ini.*`,
+        { parse_mode: 'Markdown' }
+    );
+});
 
 tgBot.action('vcf_add_all', async (ctx) => {
     const userId = ctx.from.id;
@@ -1805,7 +1904,7 @@ tgBot.action(/^toggle_(.+)$/, async (ctx) => {
     const userId = ctx.from.id;
     if (!canUseBot(userId)) return ctx.answerCbQuery('⛔ Ditolak.');
 
-    const jid = ctx.match[1];
+    const jid     = ctx.match[1];
     const session = userSessions.get(userId);
     if (!session || !kickSelections.has(userId)) return ctx.answerCbQuery('Session expired.');
 
@@ -1825,14 +1924,13 @@ tgBot.action('do_kick', async (ctx) => {
     if (!canUseBot(userId)) return ctx.answerCbQuery('⛔ Ditolak.');
     await ctx.answerCbQuery();
 
-    const session = userSessions.get(userId);
+    const session  = userSessions.get(userId);
     const selected = kickSelections.get(userId);
     if (!session || !session.loggedIn) return ctx.reply('❌ Session expired.');
     if (!selected || selected.size === 0) return ctx.reply('⚠️ *Belum ada yang dipilih!*', { parse_mode: 'Markdown' });
 
     const jidList = Array.from(selected);
 
-    // ── Animasi progress bar live ────────────────────────────
     const kickAnim = await liveKickProgress(ctx, jidList.length);
 
     const totalKicked = await stealthKick(session.sock, session.groupId, jidList, (progress) => {
@@ -1841,9 +1939,9 @@ tgBot.action('do_kick', async (ctx) => {
 
     kickSelections.set(userId, new Set());
     await kickAnim.stop(
-        `✅ *Kick Selesai\!*\n\n` +
-        `🦵 *${totalKicked}* dari *${jidList.length}* anggota berhasil dikick\.\n` +
-        `🎯 Grup: *${session.groupName || 'N/A'}*`
+        `✅ *Kick Selesai\\!*\n\n` +
+        `🦵 *${totalKicked}* dari *${jidList.length}* anggota berhasil dikick\\.\n` +
+        `🎯 Grup: *${esc(session.groupName || 'N/A')}*`
     );
 });
 
@@ -1859,7 +1957,7 @@ tgBot.action('cancel_kick', async (ctx) => {
 
 setInterval(async () => {
     const users = getAllUsers();
-    const now = new Date();
+    const now   = new Date();
     for (const u of users) {
         const exp = u.role === 'trial' ? u.trialExpiresAt : u.expiresAt;
         if (!exp) continue;
@@ -1868,7 +1966,7 @@ setInterval(async () => {
             try {
                 await tgBot.telegram.sendMessage(u.id, `⚠️ *Akses akan habis dalam ${formatCountdown(exp)}*\nPerpanjang: /beli`, { parse_mode: 'Markdown' });
                 const data = loadData();
-                const idx = data.users.findIndex(x => x.id === u.id);
+                const idx  = data.users.findIndex(x => x.id === u.id);
                 if (idx >= 0) data.users[idx].notifiedExpiry = true;
                 saveData(data);
             } catch (_) {}
@@ -1877,7 +1975,7 @@ setInterval(async () => {
 }, 60 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════
-//  HEALTH CHECK — Railway butuh port terbuka agar tidak sleep
+//  HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
 
 const http = require('http');
@@ -1902,14 +2000,14 @@ http.createServer((req, res) => {
 
 tgBot.launch().then(() => {
     console.log('\n╔══════════════════════════════════════╗');
-    console.log('║   WA KICKER BOT v4.2.1 FIXED      ║');
+    console.log('║   WA KICKER BOT v4.3.0 PICKER     ║');
     console.log('╠══════════════════════════════════════╣');
     console.log(`║  Admin IDs  : ${ADMIN_IDS.join(', ')}`);
     console.log(`║  Trial      : ${TRIAL_DURATION_HOURS} jam`);
-    console.log(`║  Stealth    : ACTIVE (human delays, randomized UA, encrypted sessions)`);
+    console.log(`║  Stealth    : ACTIVE`);
+    console.log(`║  GroupPicker: ACTIVE (klik langsung)`);
     console.log('╚══════════════════════════════════════╝\n');
 });
 
 process.on('SIGINT',  () => { tgBot.stop('SIGINT');  process.exit(); });
 process.on('SIGTERM', () => { tgBot.stop('SIGTERM'); process.exit(); });
-
