@@ -1,0 +1,20 @@
+{
+  "name": "wa-badak-bot",
+  "version": "1.0.0",
+  "description": "WA Kicker Bot via Telegram",
+  "main": "wa-badak-dev.js",
+  "scripts": {
+    "start": "node wa-badak-dev.js",
+    "dev": "node --watch wa-badak-dev.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4",
+    "telegraf": "^4.16.3"
+  }
+}
