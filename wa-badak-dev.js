@@ -1913,12 +1913,3 @@ tgBot.launch().then(() => {
 process.on('SIGINT',  () => { tgBot.stop('SIGINT');  process.exit(); });
 process.on('SIGTERM', () => { tgBot.stop('SIGTERM'); process.exit(); });
 
-// Health check endpoint agar Railway tidak sleep
-const http = require('http');
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('OK - Bot is running');
-}).listen(PORT, () => {
-    console.log(`Health check listening on port ${PORT}`);
-});
